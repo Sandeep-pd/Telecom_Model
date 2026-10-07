@@ -1,0 +1,58 @@
+CONGESTION
+
+Possible causes:
+High traffic, limited network capacity, overloaded cell.
+
+Symptoms:
+High CPU, high traffic, reduced throughput and increased latency.
+
+Recommended actions:
+Check traffic distribution, perform load balancing, optimize neighboring cells and consider capacity expansion.
+
+
+HIGH CPU
+
+Possible causes:
+Excessive traffic, software problems, routing problems or overloaded network equipment.
+
+Symptoms:
+High processor utilization and slower network processing.
+
+Recommended actions:
+Check running network services, inspect traffic and investigate overloaded equipment.
+
+
+HIGH LATENCY
+
+Possible causes:
+Network congestion, backhaul problems, routing problems and poor network conditions.
+
+Symptoms:
+Slow response time and delayed communication.
+
+Recommended actions:
+Check congestion, inspect backhaul connectivity and investigate routing.
+
+
+PACKET LOSS
+
+Possible causes:
+Network congestion, poor signal, faulty equipment and transport problems.
+
+Symptoms:
+Dropped packets, poor service quality and retransmissions.
+
+Recommended actions:
+Check signal quality, inspect network equipment and investigate transport connectivity.
+
+
+LOW THROUGHPUT
+
+Possible causes:
+Poor signal strength, congestion, interference or limited network capacity.
+
+Symptoms:
+Slow data transfer and poor user experience.
+
+Recommended actions:
+Check radio conditions, traffic utilization and available capacity.

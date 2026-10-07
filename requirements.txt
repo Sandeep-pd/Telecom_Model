@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+pydantic
+pandas
+numpy
+scikit-learn
+xgboost
+joblib
+streamlit
+requests
+plotly
+langchain
+langchain-community
+langchain-text-splitters
+langgraph
+rank-bm25
