@@ -27,3 +27,23 @@ jobs:
       - name: Push Docker image
         run: |
           docker push sandeep0030/telecom-ai:latest
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            docker pull sandeep0030/telecom-ai:latest
+
+            docker stop telecom-ai || true
+            docker rm telecom-ai || true
+
+            docker run -d \
+              --name telecom-ai \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              sandeep0030/telecom-ai:latest
+
+            docker image prune -f
