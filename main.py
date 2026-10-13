@@ -1,15 +1,23 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from fault_prediction import predict_fault
 from app.rag import search_knowledge
 
 
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+
 app = FastAPI(
     title="TeleComAI",
     description="Telecom Network Fault Prediction API",
     version="1.0"
 )
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class NetworkMetrics(BaseModel):
@@ -24,9 +32,7 @@ class NetworkMetrics(BaseModel):
 
 @app.get("/")
 def home():
-    return {
-        "message": "Welcome to TeleComAI"
-    }
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/health")

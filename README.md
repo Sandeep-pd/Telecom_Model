@@ -1,6 +1,6 @@
 # TeleComAI
 
-TeleComAI is a FastAPI service for predicting telecom network faults from network metrics and retrieving guidance for recognized faults.
+TeleComAI is a telecom network fault-prediction app with a responsive browser dashboard, a FastAPI prediction service, and a knowledge search endpoint. The dashboard analyzes six network metrics and shows the model's predicted fault, confidence, and a suggested next step.
 
 ## Requirements
 
@@ -8,7 +8,7 @@ TeleComAI is a FastAPI service for predicting telecom network faults from networ
 - The project dependencies listed in `requirements.txt`
 - The project data files in `data/`
 
-Run commands from the project root (`F:\Telecom_Model`). The API loads its model and knowledge data using project-relative paths.
+Run commands from the project root. The API loads its model and knowledge data using project-relative paths.
 
 ## Setup
 
@@ -44,6 +44,10 @@ If you did not activate the virtual environment, use its Python executable:
 
 Keep this terminal open while making requests. The API is available at `http://127.0.0.1:8000`. Interactive API documentation is at `http://127.0.0.1:8000/docs`.
 
+## Open the dashboard
+
+With the API running, open `http://127.0.0.1:8000/` in a browser. The dashboard is served by FastAPI from `static/`, checks the `/health` endpoint, and submits analysis requests to `/network/analyze`. Use the metric sliders or **Load sample**, then select **Analyze network** to view a prediction. The dashboard adapts to mobile and desktop screens and does not require a separate frontend server.
+
 ## Test with Postman
 
 Create requests in Postman using the URLs below. For POST requests, select **Body > raw > JSON** and set the content type to `application/json`.
@@ -60,10 +64,11 @@ Create requests in Postman using the URLs below. For POST requests, select **Bod
 }
 ```
 
-### Welcome route
+### Dashboard home
 
 - Method: `GET`
 - URL: `http://127.0.0.1:8000/`
+- Expected response: the TeleComAI dashboard as an HTML page.
 
 ### Analyze network metrics
 
