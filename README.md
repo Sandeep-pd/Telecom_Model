@@ -1,137 +1,125 @@
 # TeleComAI
 
-TeleComAI is a telecom network fault-prediction app with a responsive browser dashboard, a FastAPI prediction service, and a knowledge search endpoint. The dashboard analyzes six network metrics and shows the model's predicted fault, confidence, and a suggested next step.
+TeleComAI is a telecom fault analysis application with a FastAPI service and a
+responsive network-operations dashboard. The dashboard is served from `static/`
+and uses the teal theme, system light/dark mode, and the cells, prediction, and
+RAG APIs described below.
 
-## Requirements
+## Setup and run
 
-- Windows with Python installed
-- The project dependencies listed in `requirements.txt`
-- The project data files in `data/`
-
-Run commands from the project root. The API loads its model and knowledge data using project-relative paths.
-
-## Setup
-
-Open PowerShell in the project root and create/activate a virtual environment:
+From the project root in PowerShell:
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
-
-If PowerShell blocks script activation, either allow activation for the current user or run the environment's Python directly as shown below.
-
-Install the dependencies:
-
-```powershell
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-```
-
-## Run the API
-
-From the project root, start the development server:
-
-```powershell
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-If you did not activate the virtual environment, use its Python executable:
+Open `http://127.0.0.1:8000/` for the dashboard or
+`http://127.0.0.1:8000/docs` for the FastAPI documentation.
+
+The server returns frontend settings from `/api-config.js`. Configure endpoints
+and the cells fixture using environment variables; no API credentials belong
+in browser code:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TELCOAI_API_BASE_URL` | same origin | API origin used by the frontend |
+| `TELCOAI_HEALTH_ENDPOINT` | `/health` | Prediction service health check |
+| `TELCOAI_PREDICTION_ENDPOINT` | `/network/analyze` | Fault prediction |
+| `TELCOAI_CELLS_ENDPOINT` | `/api/v1/cells` | Cells list and cell details |
+| `TELCOAI_RAG_ASK_ENDPOINT` | `/rag/ask` | Question-answer RAG |
+| `TELCOAI_RAG_STATUS_ENDPOINT` | `/rag/status` | Knowledge index status |
+| `TELCOAI_USE_MOCK_CELLS` | `true` | Load the local fixture until the cells API ships |
+| `TELCOAI_MOCK_CELLS_ENDPOINT` | `/static/mock-data/cells.json` | Local cells fixture |
+| `TELCOAI_CORS_ORIGINS` | empty | Comma-separated browser origins allowed for cross-origin API use |
+
+Set `TELCOAI_USE_MOCK_CELLS=false` once `GET /api/v1/cells` and
+`GET /api/v1/cells/{cellId}` are available. The fixture follows the agreed API
+contract and is only a UI development aid; it is not live network data. When
+using a separate API origin, set `TELCOAI_API_BASE_URL` and configure that
+backend's CORS policy to allow the dashboard origin.
+
+## Prediction API
+
+`POST /network/analyze` accepts the six metrics and a cell ID:
+
+```json
+{
+  "cell_id": "CELL-1001",
+  "cpu": 82,
+  "traffic": 94,
+  "packet_loss": 6,
+  "latency": 240,
+  "signal_strength": -78,
+  "throughput": 90
+}
+```
+
+The response contains `cell_id`, `fault`, `confidence` (0-1), `next_step`,
+`alternatives` (fault/confidence pairs), and the submitted `metrics`. The
+current classifier and recommendation rules are local project components;
+recommendations are rule-based from `decision_agent.py`.
+
+## Cells API contract
+
+The live cells service is not implemented in this project yet. The dashboard
+expects:
+
+- `GET /api/v1/cells` -> `{ items, nextCursor, total }`
+- `GET /api/v1/cells/{cellId}` -> one item
+
+Each item has `id`, `name`, `updatedAt`, `metrics` (`cpu`, `traffic`, `loss`,
+`lat`, `sig`, `tp`), and `prediction` (null or `fault`, `confidence`,
+`predictedAt`). The dashboard derives the cells-needing-review count from
+`prediction.fault !== "Healthy"`.
+
+## RAG API
+
+`POST /rag/ask` accepts a question with optional cell/fault context and `top_k`
+(1-10, default 5):
+
+```json
+{
+  "question": "Why is this cell experiencing high latency and packet loss?",
+  "cell_id": "CELL-1001",
+  "fault": "congestion",
+  "top_k": 5
+}
+```
+
+The response has `question`, `answer`, `cell_id`, `fault`, `sources`, and
+`status`. Sources include the actual knowledge filename, `page` (null when
+unavailable), passage content, and normalized BM25 relevance. Unknown page
+numbers are not fabricated. If no matching passages exist, the API returns an
+explicit insufficient-evidence status. Retrieval failures are logged server
+side and return a generic 503 response.
+
+The existing `GET /rag/search?fault=CONGESTION` endpoint and its
+`{ fault, knowledge }` response are retained for compatibility.
+
+The current RAG implementation is a local BM25 retriever over the text
+knowledge file. This repository contains no configured vector database,
+reranker, or LLM. Accordingly, `/rag/ask` returns cited, extractive guidance
+and does not claim a confirmed root cause; a configured LLM-backed answer step
+can be added when its provider and credentials are supplied.
+
+## Tests
+
+Run backend contract and compatibility tests:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+python -m unittest discover -s tests -v
 ```
 
-Keep this terminal open while making requests. The API is available at `http://127.0.0.1:8000`. Interactive API documentation is at `http://127.0.0.1:8000/docs`.
+With the server running, open `http://127.0.0.1:8000/static/tests.html` for
+browser checks of API client contracts and severity thresholds.
 
-## Open the dashboard
+## Optional radio performance monitor
 
-With the API running, open `http://127.0.0.1:8000/` in a browser. The dashboard is served by FastAPI from `static/`, checks the `/health` endpoint, and submits analysis requests to `/network/analyze`. Use the metric sliders or **Load sample**, then select **Analyze network** to view a prediction. The dashboard adapts to mobile and desktop screens and does not require a separate frontend server.
-
-## Test with Postman
-
-Create requests in Postman using the URLs below. For POST requests, select **Body > raw > JSON** and set the content type to `application/json`.
-
-### Health check
-
-- Method: `GET`
-- URL: `http://127.0.0.1:8000/health`
-- Expected response:
-
-```json
-{
-  "status": "healthy"
-}
-```
-
-### Dashboard home
-
-- Method: `GET`
-- URL: `http://127.0.0.1:8000/`
-- Expected response: the TeleComAI dashboard as an HTML page.
-
-### Analyze network metrics
-
-- Method: `POST`
-- URL: `http://127.0.0.1:8000/network/analyze`
-- Body:
-
-```json
-{
-  "cell_id": "cell-001",
-  "cpu": 92,
-  "traffic": 95,
-  "packet_loss": 2,
-  "latency": 70,
-  "signal_strength": -70,
-  "throughput": 40
-}
-```
-
-All six metrics and `cell_id` are required. The metric values must be numbers; `cell_id` must be a string. A successful response contains the cell ID, predicted fault, confidence, and the submitted metrics, for example:
-
-```json
-{
-  "cell_id": "cell-001",
-  "fault": "CONGESTION",
-  "confidence": 0.91,
-  "metrics": {
-    "cpu": 92.0,
-    "traffic": 95.0,
-    "packet_loss": 2.0,
-    "latency": 70.0,
-    "signal_strength": -70.0,
-    "throughput": 40.0
-  }
-}
-```
-
-The prediction and confidence depend on the loaded model and submitted metrics.
-
-### Search telecom fault knowledge
-
-- Method: `GET`
-- URL: `http://127.0.0.1:8000/rag/search`
-- In Postman's **Params** tab, add:
-  - Key: `fault`
-  - Value: `CONGESTION`
-
-Alternatively, send the URL directly as `http://127.0.0.1:8000/rag/search?fault=CONGESTION`.
-
-The response includes the submitted fault and matching guidance:
-
-```json
-{
-  "fault": "CONGESTION",
-  "knowledge": "CONGESTION\n\nPossible causes: ..."
-}
-```
-
-The knowledge file currently contains these categories: `CONGESTION`, `HIGH CPU`, `HIGH LATENCY`, `PACKET LOSS`, and `LOW THROUGHPUT`. For a category containing spaces, send it as the query parameter value with spaces or underscores, for example `HIGH_LATENCY`.
-
-## Troubleshooting
-
-- **`ModuleNotFoundError` for a dependency:** Activate `.venv` and run `python -m pip install -r requirements.txt`.
-- **`ModuleNotFoundError: No module named 'rag'`:** Start the app from the project root with `main:app`. The RAG module is imported as `app.rag`.
-- **Port 8000 is already in use:** Choose another port in the Uvicorn command, such as `--port 8001`, and update the Postman URLs accordingly.
-- **Postman returns `422 Unprocessable Entity`:** Check that the request uses the correct HTTP method and URL, that the POST body is valid JSON, and that all required fields have the correct types.
+The separately supplied `telecom-dashboard` monitor uses
+`ws://127.0.0.1:8000/ws/metrics`. Its producer posts `snr`, `nn`, `nr`, `bn`,
+`br`, `mn`, and `mb`, plus optional `insight`, to `/telemetry` once per second.
+This radio telemetry feed is distinct from the network-operations dashboard
+above.

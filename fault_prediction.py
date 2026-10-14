@@ -119,8 +119,22 @@ def predict_fault(
     probabilities = model.predict_proba(data)[0]
     confidence = max(probabilities)
     fault = encoder.inverse_transform([prediction])[0]
+    ranked_classes = sorted(
+        enumerate(probabilities),
+        key=lambda item: float(item[1]),
+        reverse=True,
+    )
+    alternatives = [
+        {
+            "fault": str(encoder.inverse_transform([class_id])[0]),
+            "confidence": round(float(probability), 3),
+        }
+        for class_id, probability in ranked_classes
+        if class_id != prediction
+    ][:3]
 
     return {
-        "fault": fault,
-        "confidence": round(float(confidence), 3)
+        "fault": str(fault),
+        "confidence": round(float(confidence), 3),
+        "alternatives": alternatives,
     }

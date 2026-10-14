@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "id": "CELL-1001",
+      "name": "Central district",
+      "updatedAt": "2026-10-14T12:00:00Z",
+      "metrics": { "cpu": 82, "traffic": 94, "loss": 6, "lat": 240, "sig": -78, "tp": 90 },
+      "prediction": { "fault": "Congestion", "confidence": 0.91, "predictedAt": "2026-10-14T11:58:00Z" }
+    },
+    {
+      "id": "CELL-1002",
+      "name": "North park",
+      "updatedAt": "2026-10-14T12:00:00Z",
+      "metrics": { "cpu": 35, "traffic": 40, "loss": 0.5, "lat": 30, "sig": -70, "tp": 620 },
+      "prediction": { "fault": "Healthy", "confidence": 0.96, "predictedAt": "2026-10-14T11:54:00Z" }
+    },
+    {
+      "id": "CELL-1003",
+      "name": "West ridge",
+      "updatedAt": "2026-10-14T12:00:00Z",
+      "metrics": { "cpu": 40, "traffic": 35, "loss": 8, "lat": 160, "sig": -110, "tp": 60 },
+      "prediction": { "fault": "Weak coverage", "confidence": 0.87, "predictedAt": "2026-10-14T11:50:00Z" }
+    },
+    {
+      "id": "CELL-1004",
+      "name": "South exchange",
+      "updatedAt": "2026-10-14T12:00:00Z",
+      "metrics": { "cpu": 96, "traffic": 25, "loss": 3, "lat": 120, "sig": -72, "tp": 300 },
+      "prediction": { "fault": "Hardware fault", "confidence": 0.82, "predictedAt": "2026-10-14T11:46:00Z" }
+    }
+  ],
+  "nextCursor": null,
+  "total": 4
+}

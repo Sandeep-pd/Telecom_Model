@@ -34,6 +34,10 @@ def _normalize_fault(fault: str) -> str:
     return re.sub(r"[_\s]+", " ", fault.strip().lower())
 
 
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
 def _retrieve_context(state: RetrievalState) -> RetrievalState:
     query = state["query"]
     retrievers = _get_retriever()
@@ -56,7 +60,10 @@ def _get_retriever() -> dict[str, BM25Retriever]:
     documents = [
         Document(
             page_content=knowledge[heading.start():headings[index + 1].start() if index + 1 < len(headings) else len(knowledge)].strip(),
-            metadata={"fault": _normalize_fault(heading.group(1))},
+            metadata={
+                "fault": _normalize_fault(heading.group(1)),
+                "document": knowledge_path.name,
+            },
         )
         for index, heading in enumerate(headings)
     ]
@@ -72,8 +79,81 @@ def _get_retriever() -> dict[str, BM25Retriever]:
     for document in documents:
         fault_documents.setdefault(document.metadata["fault"], []).append(document)
     return {
-        fault: BM25Retriever.from_documents(fault_docs, k=len(fault_docs))
+        fault: BM25Retriever.from_documents(
+            fault_docs,
+            k=len(fault_docs),
+            preprocess_func=_tokenize,
+        )
         for fault, fault_docs in fault_documents.items()
+    }
+
+
+@lru_cache(maxsize=1)
+def _get_global_retriever() -> BM25Retriever:
+    documents = [
+        document
+        for retriever in _get_retriever().values()
+        for document in retriever.docs
+    ]
+    if not documents:
+        raise ValueError("Telecom knowledge index contains no documents.")
+    return BM25Retriever.from_documents(
+        documents,
+        k=len(documents),
+        preprocess_func=_tokenize,
+    )
+
+
+def retrieve_knowledge(
+    query: str,
+    top_k: int = 5,
+    fault: str | None = None,
+) -> list[tuple[Document, float]]:
+    """Rank indexed telecom passages with BM25 and return normalized scores."""
+    retriever = _get_global_retriever()
+    query_tokens = _tokenize(query.replace("_", " "))
+    if not query_tokens:
+        return []
+
+    raw_scores = retriever.vectorizer.get_scores(query_tokens)
+    normalized_fault = _normalize_fault(fault) if fault else None
+    fault_aliases = {
+        "congestion": {"congestion", "high latency", "packet loss", "low throughput"},
+        "high latency": {"high latency", "congestion", "packet loss"},
+        "packet loss": {"packet loss", "congestion", "high latency"},
+        "weak coverage": {"low throughput", "packet loss"},
+        "hardware fault": {"high cpu", "packet loss"},
+        "healthy": {"normal"},
+    }
+    allowed_faults = (
+        fault_aliases.get(normalized_fault, {normalized_fault})
+        if normalized_fault
+        else None
+    )
+    candidates = [
+        (document, float(raw_scores[index]))
+        for index, document in enumerate(retriever.docs)
+        if allowed_faults is None
+        or document.metadata.get("fault") in allowed_faults
+    ]
+    if not any(score > 0 for _, score in candidates):
+        return []
+
+    ranked = sorted(candidates, key=lambda item: item[1], reverse=True)
+    return [
+        (document, round(score / (score + 1), 4))
+        for document, score in ranked[:top_k]
+        if score > 0
+    ]
+
+
+def knowledge_base_status() -> dict[str, str | int]:
+    """Return safe metadata about the current local BM25 knowledge index."""
+    retrievers = _get_retriever()
+    return {
+        "status": "ready",
+        "documents_indexed": sum(len(retriever.docs) for retriever in retrievers.values()),
+        "retrieval": "BM25",
     }
 
 

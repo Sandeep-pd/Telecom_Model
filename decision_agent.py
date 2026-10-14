@@ -15,7 +15,10 @@ def make_recommendation(fault):
             "Check congestion, routing and backhaul connectivity.",
 
         "packet_loss":
-            "Check signal quality, network equipment and transport connectivity."
+            "Check signal quality, network equipment and transport connectivity.",
+
+        "low_throughput":
+            "Check radio conditions, traffic utilization and available network capacity."
     }
 
     return recommendations.get(
