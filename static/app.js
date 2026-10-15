@@ -2,7 +2,13 @@ import { ApiClient, ApiError } from "/static/api.js";
 import { METRICS, healthPercent, severity, severityLabel } from "/static/severity.js";
 import { sanitizeHtmlToText } from "/static/sanitize.js";
 
-const api = new ApiClient();
+let api = null;
+let apiInitError = "";
+try {
+  api = new ApiClient();
+} catch (error) {
+  apiInitError = error.message || "The API client could not be initialised.";
+}
 const $ = id => document.getElementById(id);
 const presets = {
   healthy: { cpu: 35, traffic: 40, loss: 0.5, lat: 30, sig: -70, tp: 620 },
@@ -20,6 +26,10 @@ const state = {
   analysisRequest: null,
   kbRequest: null,
   refreshTimer: null,
+  cellsError: "",
+  cellLoading: false,
+  total: 0,
+  hasMore: false,
 };
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -127,13 +137,15 @@ function renderAlerts() {
   }
 }
 
+const isHealthy = fault => /^(normal|healthy)$/i.test(fault);
+
 function faultLabel(fault) {
-  if (/^(normal|healthy)$/i.test(fault)) return "Healthy";
+  if (isHealthy(fault)) return "Healthy";
   return fault.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function faultTone(fault, confidence = 1) {
-  return /^(normal|healthy)$/i.test(fault) ? "ok" : confidence >= 0.7 ? "warn" : "bad";
+  return isHealthy(fault) ? "ok" : confidence >= 0.7 ? "bad" : "warn";
 }
 
 function predictionStatus(prediction) {
@@ -144,9 +156,11 @@ function predictionStatus(prediction) {
 function formatTime(value) {
   if (!value) return "—";
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? "—"
-    : parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (Number.isNaN(parsed.getTime())) return "—";
+  const options = { hour: "2-digit", minute: "2-digit" };
+  return parsed.toDateString() === new Date().toDateString()
+    ? parsed.toLocaleTimeString([], options)
+    : parsed.toLocaleString([], { month: "short", day: "numeric", ...options });
 }
 
 function renderCellSummary() {
@@ -178,17 +192,20 @@ function renderCells() {
     return;
   }
   select.disabled = false;
-  $("cellDetailStatus").textContent = "Select a cell to load its current metrics.";
+  $("cellDetailStatus").textContent = "Select a cell to load its current metrics." +
+    (state.hasMore ? ` Showing ${state.cells.length} of ${state.total} cells.` : "");
   for (const cell of state.cells) {
     const option = new Option(`${cell.id}${cell.name ? ` · ${cell.name}` : ""}`, cell.id);
     option.selected = cell.id === state.currentCell?.id;
     select.append(option);
 
     const row = node("tr", "cell");
-    row.tabIndex = 0;
-    row.setAttribute("role", "button");
-    row.setAttribute("aria-label", `Load cell ${cell.id}`);
-    const name = node("td", "", cell.id);
+    const name = node("td");
+    const pick = node("button", "cellbtn", cell.id);
+    pick.type = "button";
+    pick.setAttribute("aria-label", `Load cell ${cell.id}`);
+    if (cell.id === state.currentCell?.id) pick.setAttribute("aria-current", "true");
+    name.append(pick);
     const status = node("td");
     const fault = cell.prediction?.fault || "No prediction";
     const pill = node("span", `pill ${cell.prediction ? faultTone(fault, cell.prediction.confidence) : "warn"}`, faultLabel(fault));
@@ -197,15 +214,10 @@ function renderCells() {
     row.append(name, status, load);
     const activate = () => loadCell(cell.id);
     row.addEventListener("click", activate);
-    row.addEventListener("keydown", event => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        activate();
-      }
-    });
     body.append(row);
   }
-  $("kReview").textContent = state.cells.filter(cell => cell.prediction?.fault !== "Healthy").length;
+  const review = state.cells.filter(cell => cell.prediction && !isHealthy(cell.prediction.fault)).length;
+  $("kReview").textContent = `${review}${state.hasMore ? "+" : ""}`;
 }
 
 function tableMessage(message, columns) {
@@ -221,6 +233,8 @@ async function loadCells() {
   try {
     const result = await api.cells();
     state.cells = result.items;
+    state.total = result.total;
+    state.hasMore = result.nextCursor !== null;
     state.cellsError = "";
     renderCells();
     if (!state.cells.length) {
@@ -241,7 +255,11 @@ async function loadCells() {
 }
 
 async function loadCell(cellId) {
-  if (!cellId) return;
+  if (!cellId) return false;
+  state.analysisRequest?.abort();
+  state.analysisRequest = null;
+  state.cellLoading = true;
+  $("run").disabled = true;
   state.cellRequest?.abort();
   const controller = new AbortController();
   state.cellRequest = controller;
@@ -250,7 +268,7 @@ async function loadCell(cellId) {
   $("cells").setAttribute("aria-busy", "true");
   try {
     const cell = await api.cell(cellId, state.cells, { signal: controller.signal });
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted) return false;
     state.currentCell = cell;
     $("cellDetailStatus").textContent = `Loaded latest data for ${cell.id}.`;
     state.prediction = null;
@@ -260,32 +278,22 @@ async function loadCell(cellId) {
     renderCells();
     suggest(faultLabel(cell.prediction?.fault || ""));
     showResultState("empty", "Run an analysis to see the predicted fault, confidence and next step.");
+    return true;
   } catch (error) {
-    if (error.name === "AbortError") return;
+    if (error.name === "AbortError") return false;
+    // Keep the cell list intact and put the select back on the cell still in use.
+    $("cellSel").value = state.currentCell?.id ?? "";
     $("cellDetailStatus").textContent = `Could not load ${cellId}: ${error.message}`;
-    $("cells").replaceChildren(tableMessage(`Could not load ${cellId}: ${error.message}`, 3));
-    setApiStatus("bad", "Cell details unavailable");
+    showResultState("error", `Could not load ${cellId}: ${error.message}`);
+    return false;
   } finally {
-    if (state.cellRequest === controller) $("cells").removeAttribute("aria-busy");
+    if (state.cellRequest === controller) {
+      $("cells").removeAttribute("aria-busy");
+      state.cellLoading = false;
+      $("run").disabled = false;
+      $("run").textContent = "Analyse network";
+    }
   }
-}
-
-function updateCellAfterAnalysis(result, metrics) {
-  const prediction = {
-    fault: /^(normal|healthy)$/i.test(result.fault) ? "Healthy" : result.fault,
-    confidence: result.confidence,
-    predictedAt: new Date().toISOString(),
-  };
-  const existingIndex = state.cells.findIndex(cell => cell.id === result.cell_id);
-  const current = {
-    ...(state.cells[existingIndex] || { id: result.cell_id, name: result.cell_id, updatedAt: prediction.predictedAt }),
-    metrics,
-    prediction,
-  };
-  if (existingIndex < 0) state.cells.unshift(current);
-  else state.cells[existingIndex] = current;
-  state.currentCell = current;
-  renderCells();
 }
 
 function showResultState(kind, message = "") {
@@ -348,7 +356,7 @@ function renderPrediction(result) {
 
 function predictionPayload() {
   return {
-    cell_id: $("cellSel").value.trim(),
+    cell_id: state.currentCell.id,
     cpu: state.metrics.cpu,
     traffic: state.metrics.traffic,
     packet_loss: state.metrics.loss,
@@ -359,7 +367,8 @@ function predictionPayload() {
 }
 
 async function analyzeNetwork() {
-  if (!state.currentCell || !$("cellSel").value) {
+  if (!api || state.cellLoading) return;
+  if (!state.currentCell) {
     showResultState("error", "Select a cell before running an analysis.");
     return;
   }
@@ -372,13 +381,12 @@ async function analyzeNetwork() {
   try {
     const payload = predictionPayload();
     const result = await api.analyze(payload, { signal: controller.signal });
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted || state.currentCell?.id !== payload.cell_id) return;
     if (result.cell_id && result.cell_id !== payload.cell_id) {
       throw new ApiError("The prediction API returned a result for a different cell.");
     }
     result.cell_id = payload.cell_id;
     state.prediction = { ...result, predictedAt: new Date().toISOString() };
-    updateCellAfterAnalysis(result, state.metrics);
     renderPrediction(result);
     renderCellSummary();
     state.history.unshift({
@@ -446,13 +454,13 @@ function renderSources(sources) {
   sources.forEach((source, index) => {
     const card = node("article", "src");
     const header = node("div", "row");
-    const title = source.document || source.title || "Source";
+    const title = source.document || "Source";
     header.append(node("b", "", `${index + 1}. ${title}`));
     header.append(node("span", "sub", source.page == null ? "Page not supplied" : `Page ${source.page}`));
     card.append(header);
-    card.append(node("p", "", source.content || source.snippet || ""));
-    if (Number.isFinite(source.relevance_score ?? source.score)) {
-      const value = source.relevance_score ?? source.score;
+    card.append(node("p", "", source.content));
+    if (Number.isFinite(source.relevance_score)) {
+      const value = source.relevance_score;
       const percent = value <= 1 ? value * 100 : value;
       const track = node("div", "rel");
       const fill = node("i");
@@ -468,6 +476,10 @@ function renderSources(sources) {
 }
 
 async function askKnowledge(question = $("q").value) {
+  if (!api) {
+    $("ans").textContent = apiInitError;
+    return;
+  }
   const query = question.trim();
   if (!query) {
     $("ans").textContent = "Enter a question to search the knowledge base.";
@@ -485,7 +497,8 @@ async function askKnowledge(question = $("q").value) {
   try {
     const result = await api.ask(query, {
       cellId: state.currentCell?.id,
-      fault: state.prediction?.fault || state.currentCell?.prediction?.fault,
+      fault: [state.prediction?.fault, state.currentCell?.prediction?.fault]
+        .find(fault => fault && !isHealthy(fault)),
     }, { signal: controller.signal });
     if (controller.signal.aborted) return;
     $("ans").textContent = sanitizeHtmlToText(result.answer) ||
@@ -530,12 +543,18 @@ async function checkServices() {
     const status = await api.ragStatus();
     $("kbStat").className = `pill ${status.status === "ready" ? "ok" : "warn"}`;
     $("kbStat").textContent = status.status === "ready"
-      ? `${status.documents_indexed} passages indexed · ${status.retrieval}`
+      ? `${status.documents_indexed} passages indexed${status.retrieval ? ` · ${status.retrieval}` : ""}`
       : "Knowledge index unavailable";
   } catch (error) {
     $("kbStat").className = "pill bad";
     $("kbStat").textContent = `Knowledge index error: ${error.message}`;
   }
+}
+
+// Auto-refresh re-fetches the cell's data first, then analyses it.
+async function autoRefresh() {
+  if (!state.currentCell || state.cellLoading) return;
+  if (await loadCell(state.currentCell.id) && state.refreshTimer !== null) await analyzeNetwork();
 }
 
 for (const button of document.querySelectorAll(".chip[data-p]")) {
@@ -560,7 +579,7 @@ $("clear").addEventListener("click", () => {
 $("auto").addEventListener("click", event => {
   const enabled = state.refreshTimer === null;
   if (enabled) {
-    state.refreshTimer = setInterval(analyzeNetwork, 15000);
+    state.refreshTimer = setInterval(autoRefresh, 15000);
     analyzeNetwork();
   } else {
     clearInterval(state.refreshTimer);
@@ -576,5 +595,15 @@ renderHealth();
 renderSliders();
 drawHistory();
 suggest("");
-checkServices();
-loadCells();
+if (api) {
+  checkServices();
+  loadCells();
+} else {
+  setApiStatus("bad", "API configuration missing");
+  $("cells").replaceChildren(tableMessage(apiInitError, 3));
+  $("cellDetailStatus").textContent = apiInitError;
+  $("kCell").textContent = "Unavailable";
+  $("kbStat").className = "pill bad";
+  $("kbStat").textContent = "Knowledge index unavailable";
+  for (const id of ["cellSel", "run", "ask"]) $(id).disabled = true;
+}

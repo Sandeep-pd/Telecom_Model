@@ -9,6 +9,8 @@
  * @typedef {{answer:string, sources:RagSource[], status:string}} RagAnswer
  */
 
+const DEFAULT_TIMEOUT_MS = 20000;
+
 export class ApiError extends Error {
   constructor(message, status = 0) {
     super(message);
@@ -51,36 +53,61 @@ export class ApiClient {
   }
 
   async request(endpoint, options = {}) {
-    let response;
+    const { signal: outerSignal, ...fetchOptions } = options;
+    const controller = new AbortController();
+    const forwardAbort = () => controller.abort();
+    if (outerSignal?.aborted) controller.abort();
+    else outerSignal?.addEventListener("abort", forwardAbort, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.config.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS);
+    // Timeouts become ApiErrors; caller-initiated aborts stay AbortErrors.
+    const abortError = error => {
+      if (timedOut) return new ApiError("The API took too long to respond.", 408);
+      return error?.name === "AbortError" ? error : null;
+    };
     try {
-      response = await this.fetchImpl(this.url(endpoint), {
-        ...options,
-        headers: { Accept: "application/json", ...options.headers },
-      });
-    } catch (error) {
-      if (error?.name === "AbortError") throw error;
-      throw new ApiError("The API could not be reached.");
-    }
-    if (!response.ok) {
-      let message = `Request failed (${response.status}).`;
+      let response;
       try {
-        const payload = await response.json();
-        if (typeof payload.detail === "string") message = payload.detail;
-      } catch {
-        // Keep the status-based message for non-JSON server errors.
+        response = await this.fetchImpl(this.url(endpoint), {
+          ...fetchOptions,
+          signal: controller.signal,
+          headers: { Accept: "application/json", ...fetchOptions.headers },
+        });
+      } catch (error) {
+        throw abortError(error) || new ApiError("The API could not be reached.");
       }
-      throw new ApiError(message, response.status);
-    }
-    try {
-      return await response.json();
-    } catch {
-      throw new ApiError("The API returned invalid JSON.", response.status);
+      if (!response.ok) {
+        let message = `Request failed (${response.status}).`;
+        try {
+          const payload = await response.json();
+          if (typeof payload?.detail === "string") {
+            message = payload.detail;
+          } else if (Array.isArray(payload?.detail)) {
+            const details = payload.detail.map(item => item?.msg).filter(msg => typeof msg === "string");
+            if (details.length) message = details.join("; ");
+          }
+        } catch {
+          // Keep the status-based message for non-JSON server errors.
+        }
+        throw new ApiError(message, response.status);
+      }
+      try {
+        return await response.json();
+      } catch (error) {
+        throw abortError(error) || new ApiError("The API returned invalid JSON.", response.status);
+      }
+    } finally {
+      clearTimeout(timer);
+      outerSignal?.removeEventListener("abort", forwardAbort);
     }
   }
 
   async health(options = {}) {
     const result = await this.request(this.config.healthEndpoint, options);
-    if (result.status !== "healthy") throw new ApiError("The prediction service is not healthy.");
+    if (!isObject(result) || result.status !== "healthy") throw new ApiError("The prediction service is not healthy.");
     return result;
   }
 
@@ -157,7 +184,8 @@ export class ApiClient {
   async ragStatus(options = {}) {
     const result = await this.request(this.config.ragStatusEndpoint, options);
     if (!isObject(result) || typeof result.status !== "string" ||
-        !Number.isFinite(result.documents_indexed)) {
+        !Number.isFinite(result.documents_indexed) ||
+        !(result.retrieval == null || typeof result.retrieval === "string")) {
       throw new ApiError("The knowledge index returned an invalid status.");
     }
     return result;
