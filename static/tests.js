@@ -120,5 +120,48 @@ await test("HTTP errors are surfaced to callers", async () => {
   }
 });
 
+await test("invalid cell records are rejected", async () => {
+  const client = new ApiClient({
+    apiBaseUrl: location.origin,
+    useMockCells: false,
+    cellsEndpoint: "/api/v1/cells",
+  }, async () => response({ items: [{ ...sampleCell, metrics: { cpu: "high" } }], nextCursor: null, total: 1 }));
+  try {
+    await client.cells();
+    throw new Error("Expected validation to fail.");
+  } catch (error) {
+    assert(error instanceof ApiError, "Invalid cell should raise ApiError.");
+  }
+});
+
+await test("validation error details are surfaced", async () => {
+  const client = new ApiClient({
+    apiBaseUrl: location.origin,
+    predictionEndpoint: "/network/analyze",
+  }, async () => response({ detail: [{ msg: "cpu must be <= 100" }] }, false, 422));
+  try {
+    await client.analyze({});
+    throw new Error("Expected the request to fail.");
+  } catch (error) {
+    assert(error.message === "cpu must be <= 100", "Validation detail should be surfaced.");
+  }
+});
+
+await test("slow requests time out", async () => {
+  const client = new ApiClient({
+    apiBaseUrl: location.origin,
+    healthEndpoint: "/health",
+    requestTimeoutMs: 20,
+  }, (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+  }));
+  try {
+    await client.health();
+    throw new Error("Expected a timeout.");
+  } catch (error) {
+    assert(error instanceof ApiError && error.status === 408, "Timeout should raise ApiError 408.");
+  }
+});
+
 document.getElementById("summary").textContent =
   `${passed} passed, ${failed} failed.`;
